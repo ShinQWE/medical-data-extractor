@@ -1,0 +1,48 @@
+{
+  "columns": [
+    {
+      "name": "Возраст",
+      "description": "",
+      "original_names": [
+        "Возраст"
+      ],
+      "importance": 100
+    },
+    {
+      "name": "Название",
+      "description": "Описание",
+      "original_names": [
+        "Название"
+      ],
+      "importance": 50
+    },
+    {
+      "name": "Диагноз",
+      "description": "",
+      "original_names": [
+        "Диагноз"
+      ],
+      "importance": 50
+    },
+    {
+      "name": "Долгота болезней",
+      "description": "",
+      "original_names": [
+        "Долгота болезней"
+      ],
+      "importance": 50
+    },
+    {
+      "name": "Возрослое состояние",
+      "description": "",
+      "original_names": [
+        "Возрослое состояние"
+      ],
+      "importance": 50
+    }
+  ],
+  "stats": {
+    "processed": 1,
+    "last_update": "2026-03-20 19:14:38.822203"
+  }
+}
