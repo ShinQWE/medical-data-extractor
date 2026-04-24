@@ -2,47 +2,67 @@
   "columns": [
     {
       "name": "Возраст",
-      "description": "",
-      "original_names": [
-        "Возраст"
-      ],
-      "importance": 100
+      "description": "лет (из колонки AGE)"
     },
     {
-      "name": "Название",
-      "description": "Описание",
-      "original_names": [
-        "Название"
-      ],
-      "importance": 50
+      "name": "Дозировка_лекарства_мг",
+      "description": "мг/сут (например: 5мг/сут, 2,5мг)"
     },
     {
-      "name": "Диагноз",
-      "description": "",
-      "original_names": [
-        "Диагноз"
-      ],
-      "importance": 50
+      "name": "Размер_образования_мм",
+      "description": "мм (например: 5х2 мм, 10 мм)"
     },
     {
-      "name": "Долгота болезней",
-      "description": "",
-      "original_names": [
-        "Долгота болезней"
-      ],
-      "importance": 50
+      "name": "Количество_лимфоузлов",
+      "description": "штук (например: 19, 2, 3)"
     },
     {
-      "name": "Возрослое состояние",
-      "description": "",
-      "original_names": [
-        "Возрослое состояние"
-      ],
-      "importance": 50
+      "name": "Размер_лимфоузла_см",
+      "description": "см (например: 0,5см)"
+    },
+    {
+      "name": "Кровопотеря_мл",
+      "description": "мл (например: 50 мл)"
+    },
+    {
+      "name": "Давление_систолическое",
+      "description": "мм рт.ст."
+    },
+    {
+      "name": "Пульс",
+      "description": "уд/мин"
+    },
+    {
+      "name": "Гемоглобин",
+      "description": "г/л"
+    },
+    {
+      "name": "Лейкоциты",
+      "description": "10⁹/л"
+    },
+    {
+      "name": "Тромбоциты",
+      "description": "10⁹/л"
+    },
+    {
+      "name": "АСТ",
+      "description": "Ед/л"
+    },
+    {
+      "name": "АЛТ",
+      "description": "Ед/л"
+    },
+    {
+      "name": "Билирубин",
+      "description": "мкмоль/л"
+    },
+    {
+      "name": "Креатинин",
+      "description": "мкмоль/л"
     }
   ],
   "stats": {
     "processed": 1,
-    "last_update": "2026-03-20 19:14:38.822203"
+    "last_update": "2026-04-17 20:09:40.985761"
   }
 }

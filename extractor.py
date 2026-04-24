@@ -2,341 +2,249 @@ import re
 import pandas as pd
 import json
 import os
-import requests
 from typing import List, Dict, Any, Optional
+
+# Проверка наличия OpenAI
+try:
+    from openai import OpenAI
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
+    print("⚠️ OpenAI библиотека не установлена")
+
+from embedding_service import EmbeddingService
 
 class DataExtractor:
     def __init__(self):
-        # Настройки
-        self.ollama_url = "http://localhost:11434/api/generate"
-        self.model = "llama3.2:1b"
+        # Настройки для Qwen через API (только если библиотека есть)
+        self.client = None
+        self.model = None
         
-        # Словарь синонимов
-        self.synonyms = {
-            "вес": ["вес", "масса", "масса тела", "weight"],
-            "возраст": ["возраст", "лет", "год", "age"],
-            "рост": ["рост", "длина", "height"],
-            "давление": ["давление", "ад", "артериальное давление", "pressure"],
-            "пульс": ["пульс", "чсс", "heart rate"],
-            "температура": ["температура", "t", "temperature"],
-            "лейкоциты": ["лейкоциты", "wbc", "white blood"],
-            "гемоглобин": ["гемоглобин", "hb", "hgb", "hemoglobin"],
-            "тромбоциты": ["тромбоциты", "plt", "platelets"],
-            "аст": ["аст", "ast", "аспартатаминотрансфераза"],
-            "алт": ["алт", "alt", "аланинаминотрансфераза"],
-            "длительность": ["длительность", "продолжительность", "течение", "duration"],
-        }
+        if OPENAI_AVAILABLE:
+            try:
+                self.client = OpenAI(
+                    base_url="https://aichat.iacpaas.dvo.ru/api",
+                    api_key="sk-1e4b3879f93a4c5d88380aceff94d0ad"
+                )
+                self.model = "/home/atarasov/LLM/base_models/Qwen--Qwen3.5-27B-FP8"
+                print("✅ LLM (Qwen) инициализирован")
+            except Exception as e:
+                print(f"⚠️ Ошибка инициализации LLM: {e}")
+                self.client = None
+        else:
+            print("⚠️ OpenAI библиотека не установлена, LLM будет недоступна")
         
-        # Веса важности
-        self.importance_weights = {
-            "возраст": 100,
-            "вес": 90,
-            "давление": 85,
-            "пульс": 80,
-            "температура": 80,
-            "лейкоциты": 75,
-            "гемоглобин": 75,
-            "тромбоциты": 70,
-            "аст": 70,
-            "алт": 70,
-            "длительность": 65,
-        }
+        # Подключение к серверу эмбедингов
+        try:
+            print("🔧 Подключение к серверу эмбедингов...")
+            self.embedder = EmbeddingService(
+                api_url="http://localhost:8000/v1/embeddings",
+                api_key="sk-mysecretkey123",
+                model_name="bge-embedding",
+                embedding_dim=384
+            )
+            print("✅ Эмбединги доступны")
+        except Exception as e:
+            print(f"⚠️ Ошибка подключения к эмбедингам: {e}")
+            self.embedder = None
         
         print("✅ DataExtractor инициализирован")
-        print(f"🤖 Используем модель: {self.model}")
         print("="*50)
     
-    def _call_ollama(self, prompt: str) -> str:
-        """Отправляет запрос в Ollama"""
-        print("📤 Отправляем запрос в Ollama...")
-        try:
-            response = requests.post(
-                self.ollama_url,
-                json={
-                    "model": self.model,
-                    "prompt": prompt,
-                    "stream": False,
-                    "temperature": 0.1,
-                    "max_tokens": 1000
-                },
-                timeout=60
-            )
-            if response.status_code == 200:
-                result = response.json()["response"]
-                print(f"✅ Получили ответ ({len(result)} символов)")
-                return result
-            else:
-                print(f"❌ Ошибка Ollama: {response.status_code}")
-                return ""
-        except Exception as e:
-            print(f"❌ Ошибка: {e}")
+    def _call_qwen(self, prompt: str) -> str:
+        """Отправляет запрос к Qwen через API"""
+        if not self.client:
             return ""
-    
-    def _normalize_column_name(self, name: str) -> str:
-        """Нормализует название колонки"""
-        name_lower = name.lower().strip()
-        for canonical, variants in self.synonyms.items():
-            if name_lower in variants or any(v in name_lower for v in variants):
-                return canonical.capitalize()
-        return name
-    
-    def _merge_columns(self, columns: List[Dict]) -> List[Dict]:
-        """Объединяет похожие колонки"""
-        normalized = {}
-        for col in columns:
-            original_name = col["name"]
-            normalized_name = self._normalize_column_name(original_name)
+        
+        print("📤 Отправляем запрос к Qwen...")
+        try:
+            messages = [
+                {"role": "system", "content": "Ты - медицинский эксперт. Отвечай только JSON, без пояснений."},
+                {"role": "user", "content": prompt}
+            ]
             
-            if normalized_name not in normalized:
-                normalized[normalized_name] = {
-                    "name": normalized_name,
-                    "description": col["description"],
-                    "original_names": [original_name],
-                    "importance": self.importance_weights.get(
-                        normalized_name.lower(), 50
-                    )
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                max_tokens=2000,
+                temperature=0.1,
+                top_p=0.8,
+                presence_penalty=1.5,
+                extra_body={
+                    "top_k": 20,
+                    "chat_template_kwargs": {"enable_thinking": False}
                 }
-            else:
-                if original_name not in normalized[normalized_name]["original_names"]:
-                    normalized[normalized_name]["original_names"].append(original_name)
-        
-        result = sorted(normalized.values(), key=lambda x: x["importance"], reverse=True)
-        
-        for col in result:
-            if len(col["original_names"]) > 1:
-                print(f"   🔗 Объединено: {col['original_names']} → {col['name']}")
-        
-        return result
-    
-    async def discover_columns_with_llm(self, texts: List[str], max_cols: int, domain_description: str) -> List[Dict]:
-        """Определяет колонки через LLM"""
-        
-        print("\n🔍 Анализируем тексты с помощью LLM...")
-        
-        sample_texts = texts[:3] if len(texts) > 3 else texts
-        print(f"📊 Анализируем {len(sample_texts)} текстов")
-        
-        prompt = f"""Ты - медицинский эксперт. Проанализируй тексты и верни JSON с ЧИСЛОВЫМИ показателями.
-
-Предметная область: {domain_description}
-
-Примеры текстов:
-{chr(10).join([f'Текст {i+1}: {t[:300]}' for i, t in enumerate(sample_texts)])}
-
-Верни JSON: {{"columns": [{{"name": "Название", "description": "Описание"}}]}}
-
-Только JSON."""
-        
-        response = self._call_ollama(prompt)
-        
-        if not response:
-            return []
-        
-        # Парсим JSON
-        start = response.find('{')
-        end = response.rfind('}') + 1
-        if start != -1 and end > start:
-            json_str = response[start:end]
-            try:
-                json_str = re.sub(r',\s*}', '}', json_str)
-                json_str = re.sub(r',\s*]', ']', json_str)
-                data = json.loads(json_str)
-                if "columns" in data:
-                    columns = data["columns"]
-                    print(f"📊 До объединения: {len(columns)} колонок")
-                    columns = self._merge_columns(columns)
-                    print(f"📊 После объединения: {len(columns)} колонок")
-                    return columns
-            except Exception as e:
-                print(f"❌ Ошибка парсинга: {e}")
-        
-        return []
-    
-    def _get_fallback_columns(self) -> List[Dict]:
-        """Базовый набор колонок"""
-        print("📋 Используем базовый набор колонок")
-        return [
-            {"name": "Возраст", "description": "Возраст пациента в годах"},
-            {"name": "Вес", "description": "Вес пациента в кг"},
-            {"name": "Рост", "description": "Рост пациента в см"},
-            {"name": "Лейкоциты", "description": "Уровень лейкоцитов (10⁹/л)"},
-            {"name": "Гемоглобин", "description": "Уровень гемоглобина (г/л)"},
-            {"name": "Тромбоциты", "description": "Уровень тромбоцитов (10⁹/л)"},
-            {"name": "АСТ", "description": "Аспартатаминотрансфераза (Ед/л)"},
-            {"name": "АЛТ", "description": "Аланинаминотрансфераза (Ед/л)"},
-            {"name": "Длительность", "description": "Длительность заболевания (дни)"},
-        ]
+            )
+            
+            result = response.choices[0].message.content
+            print(f"✅ Получили ответ от Qwen ({len(result)} символов)")
+            return result
+            
+        except Exception as e:
+            print(f"❌ Ошибка Qwen API: {e}")
+            return ""
     
     async def discover_columns(self, texts: List[str], max_cols: int, domain_description: str = "") -> List[Dict]:
         """Определяет колонки"""
         
         print("\n" + "="*50)
-        print("🚀 НАЧАЛО ОПРЕДЕЛЕНИЯ КОЛОНОК")
+        print("🚀 ОПРЕДЕЛЕНИЕ КОЛОНОК")
         print("="*50)
         print(f"📝 Описание области: {domain_description}")
-        print(f"📊 Всего текстов: {len(texts)}")
+        print(f"📊 Количество текстов: {len(texts)}")
         
-        if not texts:
-            return self._get_fallback_columns()[:max_cols]
+        # Используем эмбединги для анализа
+        if self.embedder and texts:
+            try:
+                print("🔍 Анализ текстов с помощью эмбедингов...")
+                clusters = self.embedder.cluster_texts(texts[:50], threshold=0.6)
+                print(f"📊 Найдено {len(clusters)} кластеров")
+            except Exception as e:
+                print(f"⚠️ Ошибка эмбедингов: {e}")
         
-        if domain_description:
-            print("🤖 Пытаемся использовать LLM...")
-            columns = await self.discover_columns_with_llm(texts, max_cols, domain_description)
-            if columns:
-                print(f"✅ УСПЕШНО! Используем {len(columns)} колонок от LLM")
-                return columns[:max_cols]
-            else:
-                print("⚠️ LLM не дала результата")
-        else:
-            print("⚠️ Нет описания области")
+        # Фиксированный список колонок
+        columns = [
+            {"name": "Возраст", "description": "лет"},
+            {"name": "Дозировка_лекарства_мг", "description": "мг/сут"},
+            {"name": "Размер_образования_мм", "description": "мм"},
+            {"name": "Количество_лимфоузлов", "description": "штук"},
+            {"name": "Размер_лимфоузла_см", "description": "см"},
+            {"name": "Кровопотеря_мл", "description": "мл"},
+            {"name": "Давление_систолическое", "description": "мм рт.ст."},
+            {"name": "Пульс", "description": "уд/мин"},
+            {"name": "Гемоглобин", "description": "г/л"},
+            {"name": "Лейкоциты", "description": "10⁹/л"},
+            {"name": "Тромбоциты", "description": "10⁹/л"},
+            {"name": "АСТ", "description": "Ед/л"},
+            {"name": "АЛТ", "description": "Ед/л"},
+            {"name": "Билирубин", "description": "мкмоль/л"},
+            {"name": "Креатинин", "description": "мкмоль/л"},
+        ]
         
-        return self._get_fallback_columns()[:max_cols]
+        print(f"✅ Используем {len(columns)} колонок")
+        for col in columns[:10]:
+            print(f"   - {col['name']}: {col['description']}")
+        
+        return columns[:max_cols]
     
     async def extract_values(self, text: str, columns: List[Dict], row: Optional[pd.Series] = None) -> Dict[str, Any]:
-        """Извлекает значения из текста"""
+        """Извлекает числовые значения"""
         result = {}
         text_lower = text.lower()
         
+        # Возраст из колонки AGE
+        if row is not None and 'AGE' in row and pd.notna(row['AGE']):
+            try:
+                result["Возраст"] = float(row['AGE'])
+            except:
+                pass
+        
         for col in columns:
             name = col["name"]
+            
+            if name in result and result[name] is not None:
+                continue
+            
             value = None
             
-            if row is not None:
-                if name == "Возраст" and 'AGE' in row and pd.notna(row['AGE']):
-                    try:
-                        value = float(row['AGE'])
-                        result[name] = value
-                        continue
-                    except:
-                        pass
+            if name == "Дозировка_лекарства_мг":
+                value = self._extract_dosage(text, text_lower)
+            elif name == "Размер_образования_мм":
+                value = self._extract_size_mm(text, text_lower)
+            elif name == "Количество_лимфоузлов":
+                value = self._extract_lymph_nodes_count(text, text_lower)
+            elif name == "Размер_лимфоузла_см":
+                value = self._extract_lymph_node_size(text, text_lower)
+            elif name == "Кровопотеря_мл":
+                value = self._extract_blood_loss(text, text_lower)
+            elif name == "Давление_систолическое":
+                value = self._extract_pressure(text, text_lower)
+            elif name == "Пульс":
+                value = self._extract_pulse(text, text_lower)
+            elif name in ["Гемоглобин", "Лейкоциты", "Тромбоциты", "АСТ", "АЛТ", "Билирубин", "Креатинин"]:
+                value = self._extract_lab_value(text, text_lower, name)
             
-            value = self._extract_by_name(text, text_lower, name)
-            result[name] = value
+            if value is not None:
+                result[name] = value
         
         return result
     
-    def _extract_by_name(self, text: str, text_lower: str, name: str) -> Optional[float]:
-        name_lower = name.lower()
-        
-        for canonical, variants in self.synonyms.items():
-            if name_lower == canonical or any(v in name_lower for v in variants):
-                if canonical == "возраст":
-                    return self._extract_age(text, text_lower)
-                elif canonical == "вес":
-                    return self._extract_weight(text, text_lower)
-                elif canonical in ["лейкоциты", "гемоглобин", "тромбоциты", "аст", "алт"]:
-                    return self._extract_lab(text, text_lower, variants)
-                elif canonical == "длительность":
-                    return self._extract_duration(text, text_lower)
-                elif canonical == "давление":
-                    return self._extract_pressure(text, text_lower)
-                elif canonical == "пульс":
-                    return self._extract_pulse(text, text_lower)
-        
-        return None
-    
-    def _extract_age(self, text: str, text_lower: str) -> Optional[float]:
-        patterns = [r'(\d+)\s*(?:лет|год|года)', r'возраст[:\s]*(\d+)']
+    # Методы извлечения
+    def _extract_dosage(self, text: str, text_lower: str) -> Optional[float]:
+        patterns = [r'(\d+[.,]?\d*)\s*(?:мг|mg)', r'преднизолон\s*(\d+[.,]?\d*)']
         for pattern in patterns:
             match = re.search(pattern, text_lower)
             if match:
                 try:
-                    age = float(match.group(1))
-                    if 0 < age < 130:
-                        return age
+                    return float(match.group(1).replace(',', '.'))
                 except:
                     pass
         return None
     
-    def _extract_weight(self, text: str, text_lower: str) -> Optional[float]:
-        patterns = [r'(\d+[.,]?\d*)\s*(?:кг|килограмм)', r'вес[:\s]*(\d+[.,]?\d*)']
-        for pattern in patterns:
-            match = re.search(pattern, text_lower)
-            if match:
-                try:
-                    weight = float(match.group(1).replace(',', '.'))
-                    if 1 < weight < 300:
-                        return weight
-                except:
-                    pass
-        return None
-    
-    def _extract_lab(self, text: str, text_lower: str, keywords: List[str]) -> Optional[float]:
-        if self._is_date(text):
-            return None
-        for keyword in keywords:
-            if keyword in text_lower:
-                pattern = rf'{keyword}[^\d]*(\d+[.,]?\d*)'
-                match = re.search(pattern, text_lower)
-                if match:
-                    try:
-                        val = float(match.group(1).replace(',', '.'))
-                        if 0 < val < 1000:
-                            return val
-                    except:
-                        pass
-        return None
-    
-    def _extract_duration(self, text: str, text_lower: str) -> Optional[float]:
-        if self._is_date(text):
-            return None
-        patterns = [
-            (r'(\d{1,3})\s*(?:дней|дня|день|дн)', 1),
-            (r'(\d{1,2})\s*(?:недел[юи]|нед)', 7),
-            (r'(\d{1,2})\s*(?:месяц|месяца|месяцев|мес)', 30),
-            (r'(\d{1,2})\s*(?:год|года|лет|г)', 365),
-        ]
-        for pattern, multiplier in patterns:
-            match = re.search(pattern, text_lower)
-            if match:
-                try:
-                    num = float(match.group(1))
-                    if num < 100:
-                        return num * multiplier
-                except:
-                    pass
-        if 'в течение дня' in text_lower:
-            return 1
-        return None
-    
-    def _extract_pressure(self, text: str, text_lower: str) -> Optional[float]:
-        if self._is_date(text):
-            return None
-        pattern = r'(\d{2,3})\s*[\/\-]\s*(\d{2,3})'
-        match = re.search(pattern, text_lower)
+    def _extract_size_mm(self, text: str, text_lower: str) -> Optional[float]:
+        match = re.search(r'(\d+)\s*[хx]\s*\d+\s*(?:мм|mm)', text_lower)
+        if match:
+            return float(match.group(1))
+        match = re.search(r'(\d+[.,]?\d*)\s*(?:мм|mm)', text_lower)
         if match:
             try:
-                systolic = float(match.group(1))
-                if 70 < systolic < 250:
-                    return systolic
+                return float(match.group(1).replace(',', '.'))
             except:
                 pass
         return None
     
-    def _extract_pulse(self, text: str, text_lower: str) -> Optional[float]:
-        if self._is_date(text):
+    def _extract_lymph_nodes_count(self, text: str, text_lower: str) -> Optional[float]:
+        if re.search(r'лимфоузл.*\d+[.,]?\d*\s*(?:см|mm|мм)', text_lower):
             return None
-        patterns = [r'пульс[^\d]*(\d{2,3})', r'чсс[^\d]*(\d{2,3})']
-        for pattern in patterns:
-            match = re.search(pattern, text_lower)
-            if match:
-                try:
-                    pulse = float(match.group(1))
-                    if 30 < pulse < 220:
-                        return pulse
-                except:
-                    pass
+        match = re.search(r'лимфоузл[а-я]*\s+(\d+)', text_lower)
+        if match:
+            return float(match.group(1))
         return None
     
-    def _is_date(self, text: str) -> bool:
-        date_patterns = [
-            r'\d{2}[./]\d{2}[./]\d{2,4}',
-            r'\d{2}\.\d{4}',
-            r'\d{4}-\d{2}-\d{2}',
-            r'\d{4}\s*г',
-        ]
-        text_lower = text.lower()
-        for pattern in date_patterns:
-            if re.search(pattern, text_lower):
-                return True
-        return False
+    def _extract_lymph_node_size(self, text: str, text_lower: str) -> Optional[float]:
+        match = re.search(r'лимфоузл[а-я]*\s*(\d+[.,]?\d*)\s*(?:см|cm)', text_lower)
+        if match:
+            try:
+                return float(match.group(1).replace(',', '.'))
+            except:
+                pass
+        return None
+    
+    def _extract_blood_loss(self, text: str, text_lower: str) -> Optional[float]:
+        match = re.search(r'кровопотер[яи][:\s]*(\d+)\s*(?:мл|ml)', text_lower)
+        if match:
+            return float(match.group(1))
+        return None
+    
+    def _extract_pressure(self, text: str, text_lower: str) -> Optional[float]:
+        match = re.search(r'(\d{2,3})\s*[\/\-]\s*(\d{2,3})', text_lower)
+        if match:
+            return float(match.group(1))
+        return None
+    
+    def _extract_pulse(self, text: str, text_lower: str) -> Optional[float]:
+        match = re.search(r'пульс[^\d]*(\d{2,3})', text_lower)
+        if match:
+            return float(match.group(1))
+        return None
+    
+    def _extract_lab_value(self, text: str, text_lower: str, param_name: str) -> Optional[float]:
+        param_lower = param_name.lower()
+        match = re.search(rf'{param_lower}[^\d]*(\d+[.,]?\d*)', text_lower)
+        if match:
+            try:
+                return float(match.group(1).replace(',', '.'))
+            except:
+                pass
+        return None
+
+
+if __name__ == "__main__":
+    import asyncio
+    async def test():
+        extractor = DataExtractor()
+        test_text = "преднизолон 5мг/сут, лимфоузлы 0,5см, кровопотеря 50 мл"
+        columns = await extractor.discover_columns([test_text], 15, "Медицинские карты")
+        values = await extractor.extract_values(test_text, columns, None)
+        print(f"\n📊 Результат: {values}")
+    asyncio.run(test())
