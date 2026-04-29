@@ -9,12 +9,12 @@ from fastapi import FastAPI, HTTPException, Depends, Header
 from pydantic import BaseModel
 import uvicorn
 
-# Используем sentence-transformers (стабильный бэкенд)
+# Используем sentence-transformers (стабильный бэкенд)e
 from sentence_transformers import SentenceTransformer
 
 app = FastAPI(title="Embeddings Server")
 
-# Глобальные переменные
+# Глобальные переменные e
 model = None
 MODEL_NAME = None
 EMBEDDING_DIM = None

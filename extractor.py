@@ -16,7 +16,7 @@ from embedding_service import EmbeddingService
 
 class DataExtractor:
     def __init__(self):
-        # Настройки для Qwen через API (только если библиотека есть)
+        # Настройки для Qwen через API (только если библиотека есть) e
         self.client = None
         self.model = None
         
