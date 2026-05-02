@@ -1,126 +1,97 @@
+#!/usr/bin/env python3
+"""
+Сервер эмбедингов для MedExtractor
+Запуск: python embedding_server.py --host 0.0.0.0 --port 8000
+"""
+
 import argparse
-import os
-import torch
-import torch.nn.functional as F
-from typing import List, Union, Optional
-import base64
-
-from fastapi import FastAPI, HTTPException, Depends, Header
-from pydantic import BaseModel
+import numpy as np
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 import uvicorn
-
-# Используем sentence-transformers (стабильный бэкенд)e
+from pydantic import BaseModel
+from typing import List
+import torch
 from sentence_transformers import SentenceTransformer
+import logging
 
-app = FastAPI(title="Embeddings Server")
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Глобальные переменные e
+app = FastAPI(title="Embedding Server")
+
+# Глобальная модель
 model = None
-MODEL_NAME = None
-EMBEDDING_DIM = None
 
 class EmbeddingRequest(BaseModel):
-    input: Union[str, List[str]]
-    model: str = "text-embedding-ada-002"
-    encoding_format: Optional[str] = "float"
-    dimensions: Optional[int] = None
-
-class EmbeddingData(BaseModel):
-    object: str = "embedding"
-    index: int
-    embedding: List[float]
+    input: List[str]
+    model: str = "bge-embedding"
+    encoding_format: str = "float"
 
 class EmbeddingResponse(BaseModel):
     object: str = "list"
-    data: List[EmbeddingData]
+    data: List[dict]
     model: str
     usage: dict
 
-def get_api_key(authorization: Optional[str] = Header(None, alias="Authorization")) -> bool:
-    required_key = os.getenv("API_KEY")
-    if not required_key:
-        return True
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Invalid Authorization header")
-    provided_key = authorization.split("Bearer ")[1].strip()
-    if provided_key != required_key:
-        raise HTTPException(status_code=401, detail="Invalid API key")
-    return True
+@app.on_event("startup")
+async def startup_event():
+    global model
+    logger.info("Загрузка модели эмбедингов...")
+    # Используем легковесную модель
+    model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
+    logger.info("Модель загружена!")
 
-@app.post("/v1/embeddings")
-async def create_embedding(request: EmbeddingRequest, authorized: bool = Depends(get_api_key)):
-    global model, MODEL_NAME
+@app.post("/v1/embeddings", response_model=EmbeddingResponse)
+async def create_embeddings(request: EmbeddingRequest):
+    global model
     
-    texts = [request.input] if isinstance(request.input, str) else request.input
+    if model is None:
+        return JSONResponse(status_code=503, content={"error": "Модель не загружена"})
     
-    # Получаем эмбединги
-    embeddings = model.encode(
-        texts,
-        normalize_embeddings=True,
-        show_progress_bar=False
-    )
-    
-    embedding_list = embeddings.tolist()
-    
-    # Применяем ограничение dimensions
-    if request.dimensions is not None:
-        dim = min(request.dimensions, len(embedding_list[0]) if embedding_list else 0)
-        for i in range(len(embedding_list)):
-            embedding_list[i] = embedding_list[i][:dim]
-    
-    data = [EmbeddingData(index=i, embedding=emb) for i, emb in enumerate(embedding_list)]
-    
-    total_tokens = len(texts) * 512  # приблизительно
-    
-    response = EmbeddingResponse(
-        data=data,
-        model=MODEL_NAME,
-        usage={"prompt_tokens": total_tokens, "total_tokens": total_tokens}
-    )
-    
-    if request.encoding_format == "base64":
-        for item in response.data:
-            arr = torch.tensor(item.embedding, dtype=torch.float32).numpy()
-            item.embedding = base64.b64encode(arr.tobytes()).decode("utf-8")
-    
-    return response
+    try:
+        # Генерируем эмбединги
+        embeddings = model.encode(request.input, normalize_embeddings=True)
+        
+        # Формируем ответ
+        data = []
+        for i, emb in enumerate(embeddings):
+            data.append({
+                "object": "embedding",
+                "index": i,
+                "embedding": emb.tolist()
+            })
+        
+        return EmbeddingResponse(
+            data=data,
+            model=request.model,
+            usage={
+                "prompt_tokens": sum(len(text.split()) for text in request.input),
+                "total_tokens": sum(len(text.split()) for text in request.input)
+            }
+        )
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
-@app.get("/v1/models")
-async def list_models(authorized: bool = Depends(get_api_key)):
-    return {
-        "object": "list",
-        "data": [{"id": MODEL_NAME, "object": "model", "created": 1740000000, "owned_by": "local"}]
-    }
+@app.get("/health")
+async def health_check():
+    return {"status": "ok", "model_loaded": model is not None}
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Embeddings Server")
-    parser.add_argument("--host", type=str, default="0.0.0.0")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
-    parser.add_argument("--api-key", type=str, default=None)
-    parser.add_argument("--model-path", type=str, default="BAAI/bge-small-en-v1.5")
-    parser.add_argument("--model-name", type=str, default="bge-embedding")
-    parser.add_argument("--device", type=str, default="cpu")
-    
+    parser.add_argument("--device", default="cpu")
     args = parser.parse_args()
     
-    if args.api_key:
-        os.environ["API_KEY"] = args.api_key
-        print(f"✅ API-ключ установлен")
+    # Установка устройства
+    if args.device == "cuda" and torch.cuda.is_available():
+        device = "cuda"
+    else:
+        device = "cpu"
     
-    MODEL_NAME = args.model_name
-    
-    print(f"🚀 Запуск сервера эмбеддингов")
-    print(f"   Модель: {args.model_path}")
-    print(f"   Имя в API: {MODEL_NAME}")
-    print(f"   Устройство: {args.device}")
-    
-    # Загружаем модель
-    print("📥 Загрузка модели...")
-    model = SentenceTransformer(args.model_path, device=args.device)
-    EMBEDDING_DIM = model.get_sentence_embedding_dimension()
-    
-    print(f"✅ Модель загружена!")
-    print(f"   Размер эмбеддинга: {EMBEDDING_DIM}")
-    print(f"   Сервер: http://{args.host}:{args.port}")
+    logger.info(f"Запуск сервера эмбедингов на {args.host}:{args.port}")
+    logger.info(f"Устройство: {device}")
     
     uvicorn.run(app, host=args.host, port=args.port)

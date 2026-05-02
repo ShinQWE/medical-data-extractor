@@ -3,8 +3,9 @@ import pandas as pd
 import json
 import os
 from typing import List, Dict, Any, Optional
+from sklearn.metrics.pairwise import cosine_similarity
+import numpy as np
 
-# Проверка наличия OpenAI
 try:
     from openai import OpenAI
     OPENAI_AVAILABLE = True
@@ -13,21 +14,23 @@ except ImportError:
     print("⚠️ OpenAI библиотека не установлена")
 
 from embedding_service import EmbeddingService
+from config import Config
 
 class DataExtractor:
     def __init__(self):
-        # Настройки для Qwen через API (только если библиотека есть) e
+        # Загрузка конфигурации из config.py
         self.client = None
         self.model = None
         
         if OPENAI_AVAILABLE:
             try:
                 self.client = OpenAI(
-                    base_url="https://aichat.iacpaas.dvo.ru/api",
-                    api_key="sk-1e4b3879f93a4c5d88380aceff94d0ad"
+                    base_url=Config.LLM_API_URL,
+                    api_key=Config.LLM_API_KEY
                 )
-                self.model = "/home/atarasov/LLM/base_models/Qwen--Qwen3.5-27B-FP8"
-                print("✅ LLM (Qwen) инициализирован")
+                self.model = Config.LLM_MODEL_PATH
+                print(f"✅ LLM (Qwen) инициализирован")
+                print(f"   API URL: {Config.LLM_API_URL}")
             except Exception as e:
                 print(f"⚠️ Ошибка инициализации LLM: {e}")
                 self.client = None
@@ -38,10 +41,10 @@ class DataExtractor:
         try:
             print("🔧 Подключение к серверу эмбедингов...")
             self.embedder = EmbeddingService(
-                api_url="http://localhost:8000/v1/embeddings",
-                api_key="sk-mysecretkey123",
-                model_name="bge-embedding",
-                embedding_dim=384
+                api_url=Config.EMBEDDING_API_URL,
+                api_key=Config.EMBEDDING_API_KEY,
+                model_name=Config.EMBEDDING_MODEL_NAME,
+                embedding_dim=Config.EMBEDDING_DIM
             )
             print("✅ Эмбединги доступны")
         except Exception as e:
@@ -85,54 +88,99 @@ class DataExtractor:
             return ""
     
     async def discover_columns(self, texts: List[str], max_cols: int, domain_description: str = "") -> List[Dict]:
-        """Определяет колонки"""
+        """Автоматически определяет колонки с помощью LLM и эмбедингов"""
         
         print("\n" + "="*50)
-        print("🚀 ОПРЕДЕЛЕНИЕ КОЛОНОК")
+        print("🚀 АВТОМАТИЧЕСКОЕ ФОРМИРОВАНИЕ БАЗЫ ЗНАНИЙ")
         print("="*50)
         print(f"📝 Описание области: {domain_description}")
-        print(f"📊 Количество текстов: {len(texts)}")
+        print(f"📊 Количество текстов для анализа: {len(texts)}")
         
-        # Используем эмбединги для анализа
+        # Анализ с помощью эмбедингов для выявления паттернов
         if self.embedder and texts:
             try:
                 print("🔍 Анализ текстов с помощью эмбедингов...")
-                clusters = self.embedder.cluster_texts(texts[:50], threshold=0.6)
-                print(f"📊 Найдено {len(clusters)} кластеров")
+                # Кластеризация для выявления тем
+                from sklearn.cluster import KMeans
+                embeddings = self.embedder.encode_batch(texts[:min(100, len(texts))])
+                
+                # Определяем количество кластеров
+                n_clusters = min(5, len(embeddings) // 10 + 1)
+                if n_clusters > 1:
+                    kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+                    kmeans.fit(embeddings)
+                    print(f"📊 Выявлено {n_clusters} смысловых кластеров в данных")
             except Exception as e:
-                print(f"⚠️ Ошибка эмбедингов: {e}")
+                print(f"⚠️ Ошибка при анализе эмбедингов: {e}")
         
-        # Фиксированный список колонок
-        columns = [
-            {"name": "Возраст", "description": "лет"},
-            {"name": "Дозировка_лекарства_мг", "description": "мг/сут"},
-            {"name": "Размер_образования_мм", "description": "мм"},
-            {"name": "Количество_лимфоузлов", "description": "штук"},
-            {"name": "Размер_лимфоузла_см", "description": "см"},
-            {"name": "Кровопотеря_мл", "description": "мл"},
-            {"name": "Давление_систолическое", "description": "мм рт.ст."},
-            {"name": "Пульс", "description": "уд/мин"},
-            {"name": "Гемоглобин", "description": "г/л"},
-            {"name": "Лейкоциты", "description": "10⁹/л"},
-            {"name": "Тромбоциты", "description": "10⁹/л"},
-            {"name": "АСТ", "description": "Ед/л"},
-            {"name": "АЛТ", "description": "Ед/л"},
-            {"name": "Билирубин", "description": "мкмоль/л"},
-            {"name": "Креатинин", "description": "мкмоль/л"},
-        ]
+        # Формируем промпт для LLM
+        sample_texts = texts[:5] if len(texts) > 5 else texts
+        sample_text = "\n---\n".join(sample_texts)
         
-        print(f"✅ Используем {len(columns)} колонок")
-        for col in columns[:10]:
-            print(f"   - {col['name']}: {col['description']}")
+        prompt = f"""
+        На основе следующих медицинских текстов определи, какие числовые показатели должны быть извлечены.
+
+        Описание предметной области: {domain_description}
+
+        Примеры текстов:
+        {sample_text}
+
+        Определи ТОЛЬКО числовые параметры, которые могут быть в таких текстах (например: возраст, дозировка лекарства, размер образования, количество лимфоузлов, давление, пульс, показатели анализов и т.д.).
+
+        Верни ответ строго в формате JSON:
+        {{
+            "columns": [
+                {{"name": "Название_параметра", "description": "единицы измерения или пояснение"}},
+                ...
+            ]
+        }}
         
-        return columns[:max_cols]
+        Максимум {max_cols} параметров.
+        """
+        
+        response = self._call_qwen(prompt)
+        
+        columns = []
+        if response:
+            try:
+                # Извлекаем JSON из ответа
+                json_match = re.search(r'\{.*\}', response, re.DOTALL)
+                if json_match:
+                    data = json.loads(json_match.group())
+                    columns = data.get("columns", [])
+            except json.JSONDecodeError as e:
+                print(f"❌ Ошибка парсинга JSON: {e}")
+                print(f"Ответ: {response[:500]}")
+        
+        # Если LLM не сработала, используем стандартные колонки
+        if not columns:
+            print("⚠️ LLM не вернула результат, используем стандартные колонки")
+            columns = [
+                {"name": "Возраст", "description": "лет"},
+                {"name": "Дозировка_лекарства_мг", "description": "мг/сут"},
+                {"name": "Размер_образования_мм", "description": "мм"},
+                {"name": "Количество_лимфоузлов", "description": "штук"},
+                {"name": "Размер_лимфоузла_см", "description": "см"},
+                {"name": "Кровопотеря_мл", "description": "мл"},
+                {"name": "Давление_систолическое", "description": "мм рт.ст."},
+                {"name": "Пульс", "description": "уд/мин"},
+                {"name": "Гемоглобин", "description": "г/л"},
+                {"name": "Лейкоциты", "description": "10⁹/л"},
+            ]
+        
+        columns = columns[:max_cols]
+        print(f"\n✅ Сформировано {len(columns)} колонок:")
+        for col in columns:
+            print(f"   - {col['name']}: {col.get('description', '')}")
+        
+        return columns
     
     async def extract_values(self, text: str, columns: List[Dict], row: Optional[pd.Series] = None) -> Dict[str, Any]:
-        """Извлекает числовые значения"""
+        """Извлекает числовые значения с помощью регулярных выражений"""
         result = {}
         text_lower = text.lower()
         
-        # Возраст из колонки AGE
+        # Возраст из колонки AGE если есть
         if row is not None and 'AGE' in row and pd.notna(row['AGE']):
             try:
                 result["Возраст"] = float(row['AGE'])
@@ -147,7 +195,9 @@ class DataExtractor:
             
             value = None
             
-            if name == "Дозировка_лекарства_мг":
+            if name == "Возраст" and not value:
+                value = self._extract_age(text, text_lower)
+            elif name == "Дозировка_лекарства_мг":
                 value = self._extract_dosage(text, text_lower)
             elif name == "Размер_образования_мм":
                 value = self._extract_size_mm(text, text_lower)
@@ -163,13 +213,26 @@ class DataExtractor:
                 value = self._extract_pulse(text, text_lower)
             elif name in ["Гемоглобин", "Лейкоциты", "Тромбоциты", "АСТ", "АЛТ", "Билирубин", "Креатинин"]:
                 value = self._extract_lab_value(text, text_lower, name)
+            else:
+                # Общий поиск чисел с единицами измерения
+                value = self._extract_generic_value(text, text_lower, name)
             
             if value is not None:
                 result[name] = value
         
         return result
     
-    # Методы извлечения
+    def _extract_age(self, text: str, text_lower: str) -> Optional[float]:
+        patterns = [r'(\d+)\s*лет', r'age[:\s]*(\d+)', r'возраст[:\s]*(\d+)']
+        for pattern in patterns:
+            match = re.search(pattern, text_lower)
+            if match:
+                try:
+                    return float(match.group(1))
+                except:
+                    pass
+        return None
+    
     def _extract_dosage(self, text: str, text_lower: str) -> Optional[float]:
         patterns = [r'(\d+[.,]?\d*)\s*(?:мг|mg)', r'преднизолон\s*(\d+[.,]?\d*)']
         for pattern in patterns:
@@ -237,14 +300,15 @@ class DataExtractor:
             except:
                 pass
         return None
-
-
-if __name__ == "__main__":
-    import asyncio
-    async def test():
-        extractor = DataExtractor()
-        test_text = "преднизолон 5мг/сут, лимфоузлы 0,5см, кровопотеря 50 мл"
-        columns = await extractor.discover_columns([test_text], 15, "Медицинские карты")
-        values = await extractor.extract_values(test_text, columns, None)
-        print(f"\n📊 Результат: {values}")
-    asyncio.run(test())
+    
+    def _extract_generic_value(self, text: str, text_lower: str, param_name: str) -> Optional[float]:
+        """Общий поиск чисел в контексте параметра"""
+        param_lower = param_name.lower()
+        # Ищем число после названия параметра
+        match = re.search(rf'{param_lower}[^\d]*(\d+[.,]?\d*)', text_lower)
+        if match:
+            try:
+                return float(match.group(1).replace(',', '.'))
+            except:
+                pass
+        return None

@@ -96,6 +96,22 @@
             width: auto;
         }
         
+        button.danger {
+            background: #f44336;
+        }
+        
+        button.danger:hover {
+            background: #d32f2f;
+        }
+        
+        button.primary {
+            background: #2196F3;
+        }
+        
+        button.primary:hover {
+            background: #0b7dda;
+        }
+        
         .progress-bar {
             width: 100%;
             height: 20px;
@@ -125,6 +141,9 @@
         .column-item {
             padding: 10px;
             border-bottom: 1px solid #eee;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
         
         .column-item:last-child {
@@ -142,9 +161,23 @@
             margin-top: 3px;
         }
         
+        .column-actions {
+            display: flex;
+            gap: 5px;
+        }
+        
         .error {
             color: #d32f2f;
             background: #ffebee;
+            padding: 10px;
+            border-radius: 5px;
+            margin-top: 10px;
+            display: none;
+        }
+        
+        .success {
+            color: #4CAF50;
+            background: #e8f5e9;
             padding: 10px;
             border-radius: 5px;
             margin-top: 10px;
@@ -155,6 +188,7 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
+            gap: 10px;
         }
         
         .text-center {
@@ -169,45 +203,77 @@
             margin-top: 10px;
             font-size: 13px;
         }
+        
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        
+        .field-row {
+            display: flex;
+            gap: 10px;
+            align-items: flex-end;
+        }
+        
+        .field-row .form-group {
+            flex: 1;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1> MedExtractor</h1>
+        <h1>MedExtractor</h1>
 
         <!-- Загрузка файла -->
         <div class="card">
-            <h2>Загрузить файл</h2>
+            <h2>📁 Загрузить файл</h2>
             <form id="uploadForm">
                 <div class="form-group">
-                    <label> Файл (Excel/CSV):</label>
+                    <label>Файл (Excel/CSV):</label>
                     <input type="file" id="file" accept=".xlsx,.xls,.csv" required>
                 </div>
 
                 <div class="form-group">
-                    <label> Колонка с ID:</label>
+                    <label>Колонка с ID (PersonID):</label>
                     <input type="text" id="idCol" value="PersonID_Ref">
                 </div>
 
                 <div class="form-group">
-                    <label> Колонка с текстом:</label>
+                    <label>Колонка с текстом:</label>
                     <input type="text" id="textCol" value="PropertyValue">
                 </div>
-
-                <!-- НОВОЕ ПОЛЕ! -->
+                
                 <div class="form-group">
-                    <label> Описание предметной области (для LLM):</label>
-                    <textarea id="domainDesc" placeholder="Например: Медицинские карты пациентов с онкологическими заболеваниями, кардиология, педиатрия...">Медицинские карты пациентов</textarea>
-                    <div class="info">Заполните, чтобы LLM сама определила нужные колонки</div>
+                    <label>Колонка с IsTarget:</label>
+                    <input type="text" id="targetCol" value="IsTarget">
+                    
                 </div>
 
-                <button type="submit">Начать обработку</button>
+                <div class="form-group">
+                    <label>Описание предметной области (для LLM):</label>
+                    <textarea id="domainDesc" placeholder="Например: Медицинские карты пациентов с онкологическими заболеваниями, кардиология, педиатрия...">Медицинские карты пациентов</textarea>
+                </div>
+
+                <button type="submit">🚀 Начать обработку</button>
             </form>
         </div>
 
-        <!-- Прогресс -->
+        <!-- Управление базой знаний -->
+        <div class="card">
+            <h2>📚 База знаний</h2>
+            <div class="button-group">
+                <button id="clearKBBtn" class="danger small" style="flex:1;">🗑️ Очистить</button>
+                <button id="refreshKBBtn" class="small" style="flex:1;">🔄 Обновить</button>
+            </div>
+            <div id="columnsList" class="columns-list" style="margin-top: 15px;">
+                <div class="text-center" style="color: #999; padding: 20px;">Загрузка...</div>
+            </div>
+        </div>
+
+        <!-- Прогресс обработки -->
         <div class="card" id="progressCard" style="display: none;">
-            <h2>Обработка</h2>
+            <h2>⚙️ Обработка</h2>
             <div class="progress-bar">
                 <div class="progress-fill" id="progressFill"></div>
             </div>
@@ -216,17 +282,7 @@
                 <a href="#" id="downloadLink" style="display: inline-block; background: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-top: 10px;">📥 Скачать результат</a>
             </div>
             <div id="errorMessage" class="error"></div>
-        </div>
-
-        <!-- База знаний -->
-        <div class="card">
-            <div class="flex">
-                <h2> База знаний</h2>
-                <button class="small" onclick="loadColumns()">🔄</button>
-            </div>
-            <div id="columnsList" class="columns-list">
-                <div class="text-center" style="color: #999; padding: 20px;">Загрузка...</div>
-            </div>
+            <div id="successMessage" class="success"></div>
         </div>
     </div>
 
@@ -244,10 +300,10 @@
                 return;
             }
 
-            // Показываем прогресс
             document.getElementById('progressCard').style.display = 'block';
             document.getElementById('downloadSection').style.display = 'none';
             document.getElementById('errorMessage').style.display = 'none';
+            document.getElementById('successMessage').style.display = 'none';
             document.getElementById('statusText').innerText = 'Загрузка...';
             document.getElementById('progressFill').style.width = '0%';
 
@@ -255,8 +311,9 @@
             formData.append('file', file);
             formData.append('id_col', document.getElementById('idCol').value);
             formData.append('text_col', document.getElementById('textCol').value);
+            formData.append('target_col', document.getElementById('targetCol').value);
             formData.append('max_cols', '15');
-            formData.append('domain_desc', document.getElementById('domainDesc').value); // Новое поле
+            formData.append('domain_desc', document.getElementById('domainDesc').value);
 
             try {
                 const response = await fetch('/upload', {
@@ -267,13 +324,35 @@
                 const data = await response.json();
                 currentTask = data.task_id;
 
-                // Начинаем проверять статус
                 if (checkInterval) clearInterval(checkInterval);
                 checkInterval = setInterval(checkStatus, 1000);
 
             } catch (error) {
                 showError('Ошибка загрузки');
             }
+        };
+        
+        // Очистка базы знаний
+        document.getElementById('clearKBBtn').onclick = async () => {
+            if (confirm('Вы уверены, что хотите очистить всю базу знаний?')) {
+                try {
+                    const response = await fetch('/clear_knowledge_base', { method: 'POST' });
+                    const data = await response.json();
+                    if (data.success) {
+                        showSuccess('База знаний очищена');
+                        loadColumns();
+                    } else {
+                        showError(data.error || 'Ошибка очистки');
+                    }
+                } catch (error) {
+                    showError('Ошибка при очистке');
+                }
+            }
+        };
+        
+        // Обновление списка колонок
+        document.getElementById('refreshKBBtn').onclick = () => {
+            loadColumns();
         };
 
         // Проверка статуса
@@ -294,7 +373,7 @@
                     clearInterval(checkInterval);
                     document.getElementById('downloadSection').style.display = 'block';
                     document.getElementById('downloadLink').href = `/download/${currentTask}`;
-                    loadColumns(); // Обновляем базу знаний
+                    loadColumns();
                 }
 
                 if (status.status === 'failed') {
@@ -319,24 +398,44 @@
                 if (data.columns && data.columns.length > 0) {
                     listEl.innerHTML = data.columns.map(col => `
                         <div class="column-item">
-                            <div class="column-name">${col.name}</div>
-                            <div class="column-desc">${col.description || ''}</div>
+                            <div>
+                                <div class="column-name">${escapeHtml(col.name)}</div>
+                                <div class="column-desc">${escapeHtml(col.description || '')}</div>
+                            </div>
                         </div>
                     `).join('');
                 } else {
-                    listEl.innerHTML = '<div class="text-center" style="color: #999; padding: 20px;">Нет данных</div>';
+                    listEl.innerHTML = '<div class="text-center" style="color: #999; padding: 20px;">База знаний пуста. Нажмите "Сформировать" для автоматического создания.</div>';
                 }
             } catch (error) {
                 listEl.innerHTML = '<div class="text-center" style="color: #d32f2f; padding: 20px;">Ошибка загрузки</div>';
             }
         }
-
-        function showError(msg) {
-            document.getElementById('errorMessage').innerText = msg;
-            document.getElementById('errorMessage').style.display = 'block';
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
         }
 
-        // Загружаем колонки при старте
+        function showError(msg) {
+            const errorEl = document.getElementById('errorMessage');
+            errorEl.innerText = msg;
+            errorEl.style.display = 'block';
+            setTimeout(() => {
+                errorEl.style.display = 'none';
+            }, 5000);
+        }
+        
+        function showSuccess(msg) {
+            const successEl = document.getElementById('successMessage');
+            successEl.innerText = msg;
+            successEl.style.display = 'block';
+            setTimeout(() => {
+                successEl.style.display = 'none';
+            }, 5000);
+        }
+
         loadColumns();
     </script>
 </body>
