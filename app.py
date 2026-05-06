@@ -29,7 +29,6 @@ def find_id_column(df: pd.DataFrame) -> str:
     for col in df.columns:
         for id_name in possible_id_names:
             if id_name.lower() in col.lower():
-                print(f"🔍 Найдена ID колонка: {col}")
                 return col
     return df.columns[0]
 
@@ -45,19 +44,6 @@ def find_text_column(df: pd.DataFrame) -> str:
             if len(sample) > 0 and sample.astype(str).str.len().mean() > 30:
                 return col
     return df.columns[-1]
-
-def find_target_column(df: pd.DataFrame, user_target_col: str) -> str:
-    """Поиск колонки IsTarget"""
-    if user_target_col and user_target_col in df.columns:
-        return user_target_col
-    
-    possible_target_names = ['IsTarget', 'is_target', 'target', 'Target', 'Цель']
-    for col in df.columns:
-        for target_name in possible_target_names:
-            if target_name.lower() in col.lower():
-                print(f"🔍 Найдена Target колонка: {col}")
-                return col
-    return None
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
@@ -76,10 +62,6 @@ async def upload_file(
     task_id = str(uuid.uuid4())[:8]
     file_path = f"uploads/{task_id}_{file.filename}"
     
-    print(f"\n📤 Получен файл: {file.filename}")
-    print(f"📝 Описание области: {domain_desc}")
-    print(f"🎯 Target колонка: {target_col}")
-    
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
     
@@ -89,44 +71,8 @@ async def upload_file(
     
     return {"task_id": task_id}
 
-@app.post("/generate_knowledge_base")
-async def generate_knowledge_base(
-    file: UploadFile = File(...),
-    domain_desc: str = Form(""),
-    max_cols: int = Form(20)
-):
-    """Автоматически формирует базу знаний на основе загруженного файла"""
-    try:
-        file_path = f"uploads/temp_{uuid.uuid4()}_{file.filename}"
-        
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        
-        if file_path.endswith('.csv'):
-            df = pd.read_csv(file_path)
-        else:
-            df = pd.read_excel(file_path)
-        
-        # Находим текстовую колонку
-        text_col = find_text_column(df)
-        texts = df[text_col].dropna().astype(str).tolist()[:50]  # Берем первые 50 записей
-        
-        # Формируем базу знаний
-        columns = await extractor.discover_columns(texts, max_cols, domain_desc)
-        
-        if columns:
-            kb.save(columns)
-            os.remove(file_path)
-            return {"success": True, "columns_count": len(columns), "columns": columns}
-        else:
-            return {"success": False, "error": "Не удалось сформировать колонки"}
-            
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
 @app.post("/clear_knowledge_base")
 async def clear_knowledge_base():
-    """Очищает базу знаний"""
     try:
         kb.clear()
         return {"success": True}
@@ -158,66 +104,93 @@ async def process_file(task_id: str, file_path: str, id_col: str, text_col: str,
         print(f"\n🔧 Начинаем обработку задачи {task_id}")
         tasks[task_id]["progress"] = 0.1
         
+        # Загрузка файла
         if file_path.endswith('.csv'):
             df = pd.read_csv(file_path)
         else:
             df = pd.read_excel(file_path)
         
-        tasks[task_id]["progress"] = 0.3
+        tasks[task_id]["progress"] = 0.2
         
-        # Определяем ID колонку
+        # Определяем колонки
         if not id_col or id_col not in df.columns:
             id_col = find_id_column(df)
-            print(f"📌 Используем ID колонку: {id_col}")
         
-        # Определяем текстовую колонку
         if not text_col or text_col not in df.columns:
             text_col = find_text_column(df)
-            print(f"📌 Используем текстовую колонку: {text_col}")
         
-        texts = df[text_col].dropna().astype(str).tolist() if text_col in df.columns else []
+        print(f"📌 ID колонка: {id_col}")
+        print(f"📌 Текстовая колонка: {text_col}")
         
-        # Загружаем или формируем базу знаний
+        # Получаем или создаем базу знаний
         columns = kb.get_all()
+        
+        # ДОБАВЛЯЕМ СТАНДАРТНЫЕ КОЛОНКИ, ЕСЛИ БАЗА ПУСТА
         if not columns:
-            print("📚 База знаний пуста, формируем автоматически...")
-            columns = await extractor.discover_columns(texts[:50], max_cols, domain_desc)
-            if columns:
-                kb.save(columns)
-                print(f"✅ Сформировано {len(columns)} колонок")
+            print("📚 База знаний пуста, создаем стандартные колонки...")
+            columns = [
+                {"name": "Возраст", "type": "numeric", "description": "лет"},
+                {"name": "Дозировка_лекарства_мг", "type": "numeric", "description": "мг/сут"},
+                {"name": "Размер_образования_мм", "type": "numeric", "description": "мм"},
+                {"name": "Количество_лимфоузлов", "type": "numeric", "description": "штук"},
+                {"name": "Размер_лимфоузла_см", "type": "numeric", "description": "см"},
+                {"name": "Кровопотеря_мл", "type": "numeric", "description": "мл"},
+                {"name": "Давление_систолическое", "type": "numeric", "description": "мм рт.ст."},
+                {"name": "Пульс", "type": "numeric", "description": "уд/мин"},
+                {"name": "Гемоглобин", "type": "numeric", "description": "г/л"},
+                {"name": "Лейкоциты", "type": "numeric", "description": "10⁹/л"},
+                {"name": "Тромбоциты", "type": "numeric", "description": "10⁹/л"},
+                {"name": "АСТ", "type": "numeric", "description": "Ед/л"},
+                {"name": "АЛТ", "type": "numeric", "description": "Ед/л"},
+                {"name": "Билирубин", "type": "numeric", "description": "мкмоль/л"},
+                {"name": "Креатинин", "type": "numeric", "description": "мкмоль/л"},
+                {"name": "Пол", "type": "categorical", "description": "М/Ж", "mapping": {"м": 1, "ж": 0, "male": 1, "female": 0, "мужской": 1, "женский": 0}},
+                {"name": "Курит", "type": "categorical", "description": "да/нет", "mapping": {"да": 1, "нет": 0, "курит": 1, "не курит": 0}},
+                {"name": "Диабет", "type": "categorical", "description": "есть/нет", "mapping": {"есть": 1, "нет": 0, "диабет": 1}},
+                {"name": "Гипертензия", "type": "categorical", "description": "есть/нет", "mapping": {"есть": 1, "нет": 0}},
+            ]
+            kb.save(columns)
+            print(f"✅ Создано {len(columns)} колонок")
         
-        tasks[task_id]["progress"] = 0.5
+        tasks[task_id]["progress"] = 0.4
         
+        # ИЗВЛЕКАЕМ ЗНАЧЕНИЯ ДЛЯ КАЖДОЙ СТРОКИ
         results = []
         total_rows = len(df)
         
-        print(f"📊 Обработка {total_rows} строк...")
-        
         for idx, row in df.iterrows():
-            text = str(row[text_col]) if text_col in df and pd.notna(row[text_col]) else ""
-            values = await extractor.extract_values(text, columns, row)
+            text = str(row[text_col]) if pd.notna(row[text_col]) else ""
             
-            # ✅ ИСПРАВЛЕНО: IsTarget всегда копирует значение PersonID_Ref
+            # Извлекаем значения для всех колонок
+            extracted_values = {}
+            for col in columns:
+                col_name = col["name"]
+                col_type = col.get("type", "numeric")
+                
+                # Извлекаем значение
+                value = await extractor.extract_value(text, col_name, col_type, col.get("mapping", {}))
+                
+                if value is not None:
+                    extracted_values[col_name] = value
+            
+            # Формируем строку результата
             row_result = {
-                id_col: row[id_col],           # PersonID_Ref
-                "IsTarget": row[id_col]        # IsTarget = PersonID_Ref
+                "PersonID_Ref": row[id_col],
+                "IsTarget": row[id_col]  # Копируем ID
             }
-            
-            # Добавляем извлеченные значения
-            row_result.update(values)
+            row_result.update(extracted_values)
             results.append(row_result)
             
             if idx % 5 == 0:
-                tasks[task_id]["progress"] = 0.5 + 0.4 * (idx / total_rows)
-                print(f"   Обработано {idx}/{total_rows} строк...")
+                tasks[task_id]["progress"] = 0.4 + 0.5 * (idx / total_rows)
         
-        # Создаем DataFrame
+        # СОЗДАЕМ DATAFRAME СО ВСЕМИ КОЛОНКАМИ
         result_df = pd.DataFrame(results)
         
-        # Переупорядочиваем колонки: PersonID_Ref, IsTarget, затем остальные
-        cols_order = [id_col, "IsTarget"] + [c for c in result_df.columns if c not in [id_col, "IsTarget"]]
-        result_df = result_df[cols_order]
+        # Заполняем пропуски
+        result_df = result_df.fillna('')
         
+        # Сохраняем результат
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         original_name = os.path.basename(file_path)
         if original_name.startswith(f"{task_id}_"):
@@ -232,10 +205,10 @@ async def process_file(task_id: str, file_path: str, id_col: str, text_col: str,
         tasks[task_id].update({"status": "completed", "progress": 1.0, "result": out_path, "filename": filename})
         
         print(f"\n✅ Обработка завершена: {filename}")
-        print(f"📊 Колонки в результате: {list(result_df.columns)}")
-        print(f"📊 Первые 3 строки результата:")
+        print(f"📊 Всего колонок в результате: {len(result_df.columns)}")
+        print(f"📊 Колонки: {list(result_df.columns)}")
+        print(f"📊 Первые 3 строки:")
         print(result_df.head(3).to_string())
-        print(f"\n📊 Проверка IsTarget: {result_df['IsTarget'].tolist()[:5]}")
         
     except Exception as e:
         print(f"❌ Ошибка: {e}")

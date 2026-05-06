@@ -1,0 +1,126 @@
+{
+  "columns": [
+    {
+      "name": "Возраст",
+      "type": "numeric",
+      "description": "лет"
+    },
+    {
+      "name": "Дозировка_лекарства_мг",
+      "type": "numeric",
+      "description": "мг/сут"
+    },
+    {
+      "name": "Размер_образования_мм",
+      "type": "numeric",
+      "description": "мм"
+    },
+    {
+      "name": "Количество_лимфоузлов",
+      "type": "numeric",
+      "description": "штук"
+    },
+    {
+      "name": "Размер_лимфоузла_см",
+      "type": "numeric",
+      "description": "см"
+    },
+    {
+      "name": "Кровопотеря_мл",
+      "type": "numeric",
+      "description": "мл"
+    },
+    {
+      "name": "Давление_систолическое",
+      "type": "numeric",
+      "description": "мм рт.ст."
+    },
+    {
+      "name": "Пульс",
+      "type": "numeric",
+      "description": "уд/мин"
+    },
+    {
+      "name": "Гемоглобин",
+      "type": "numeric",
+      "description": "г/л"
+    },
+    {
+      "name": "Лейкоциты",
+      "type": "numeric",
+      "description": "10⁹/л"
+    },
+    {
+      "name": "Тромбоциты",
+      "type": "numeric",
+      "description": "10⁹/л"
+    },
+    {
+      "name": "АСТ",
+      "type": "numeric",
+      "description": "Ед/л"
+    },
+    {
+      "name": "АЛТ",
+      "type": "numeric",
+      "description": "Ед/л"
+    },
+    {
+      "name": "Билирубин",
+      "type": "numeric",
+      "description": "мкмоль/л"
+    },
+    {
+      "name": "Креатинин",
+      "type": "numeric",
+      "description": "мкмоль/л"
+    },
+    {
+      "name": "Пол",
+      "type": "categorical",
+      "description": "М/Ж",
+      "mapping": {
+        "м": 1,
+        "ж": 0,
+        "male": 1,
+        "female": 0,
+        "мужской": 1,
+        "женский": 0
+      }
+    },
+    {
+      "name": "Курит",
+      "type": "categorical",
+      "description": "да/нет",
+      "mapping": {
+        "да": 1,
+        "нет": 0,
+        "курит": 1,
+        "не курит": 0
+      }
+    },
+    {
+      "name": "Диабет",
+      "type": "categorical",
+      "description": "есть/нет",
+      "mapping": {
+        "есть": 1,
+        "нет": 0,
+        "диабет": 1
+      }
+    },
+    {
+      "name": "Гипертензия",
+      "type": "categorical",
+      "description": "есть/нет",
+      "mapping": {
+        "есть": 1,
+        "нет": 0
+      }
+    }
+  ],
+  "stats": {
+    "processed": 2,
+    "last_update": "2026-05-06 11:50:03.975592"
+  }
+}
